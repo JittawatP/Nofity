@@ -1,0 +1,156 @@
+import schedule
+import time
+from selenium import webdriver
+from PIL import Image
+import requests
+from datetime import datetime
+
+def job():
+    # ตรวจสอบวันในสัปดาห์
+    today = datetime.today().weekday()  # 0 = Monday, 6 = Sunday
+    if today != 6:  # 6 คือวันอาทิตย์
+        # 1. จับภาพหน้าจอจากหน้าเว็บ
+
+        # ตั้งค่า Selenium webdriver (เช่น Chrome)
+        driver = webdriver.Chrome()
+
+        # เปิดหน้าเว็บของคุณ
+        driver.get('http://localhost:5000/monitor804')
+
+        # ทำให้เบราว์เซอร์ขยายเป็นโหมดเต็มหน้าจอ
+        driver.maximize_window()
+
+        # หน่วงเวลา 1 นาที (30 วินาที)
+        time.sleep(10)
+
+        # เลื่อนลงไปยังด้านล่างสุดของหน้าเว็บ
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+
+        # กำหนดชื่อไฟล์ภาพที่ต้องการบันทึก
+        screenshot_path = 'monitor804.png'
+
+        # จับภาพหน้าจอและบันทึกเป็นไฟล์
+        driver.save_screenshot(screenshot_path)
+
+        # ปิด browser
+        driver.quit()
+
+        # เปิดและตัดภาพ
+        with Image.open(screenshot_path) as img:
+            # กำหนดขนาดของพื้นที่ที่ต้องการ (left, top, right, bottom)
+            left = 0   # ระยะห่างจากขอบซ้าย
+            top = 45    # ระยะห่างจากขอบบน
+            right = img.width  # ระยะห่างจากขอบซ้ายถึงขอบขวา
+            bottom = img.height # ระยะห่างจากขอบบนถึงขอบล่าง
+
+            # ตัดภาพตามขนาดที่กำหนด
+            cropped_img = img.crop((left, top, right, bottom))
+            cropped_img.save('cropped_monitor804.png')
+
+        # 2. ส่งภาพผ่าน Line Notify
+
+        # Token ของ Line Notify
+        line_notify_token = ''
+        line_notify_api = 'https://notify-api.line.me/api/notify'
+
+        # กำหนด headers สำหรับ Line Notify
+        headers = {
+            'Authorization': f'Bearer {line_notify_token}'
+        }
+
+        # กำหนดข้อมูลที่ต้องการส่ง
+        data = {
+            'message': 'Monitor804'
+        }
+
+        # เปิดไฟล์ภาพที่ต้องการส่ง
+        with open('cropped_monitor804.png', 'rb') as f:
+            files = {
+                'imageFile': f
+            }
+
+            # ส่งข้อมูลไปที่ Line Notify
+            response = requests.post(line_notify_api, headers=headers, data=data, files=files)
+
+        # ตรวจสอบสถานะการส่ง
+        if response.status_code == 200:
+            print('ส่งภาพสำเร็จ : monitor804')
+        else:
+            print(f'การส่งภาพล้มเหลว: {response.status_code}')
+
+
+            
+
+        driver = webdriver.Chrome()
+
+        # เปิดหน้าเว็บของคุณ
+        driver.get('http://localhost:5000/dashboard')
+
+        driver.maximize_window()
+
+        time.sleep(10)
+
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+
+        # กำหนดชื่อไฟล์ภาพที่ต้องการบันทึก
+        screenshot_path = 'dashboard.png'
+
+        # จับภาพหน้าจอและบันทึกเป็นไฟล์
+        driver.save_screenshot(screenshot_path)
+
+        # ปิด browser
+        driver.quit()
+
+        # เปิดและตัดภาพ
+        with Image.open(screenshot_path) as img:
+            # กำหนดขนาดของพื้นที่ที่ต้องการ (left, top, right, bottom)
+            left = 216   # ระยะห่างจากขอบซ้าย
+            top = 117    # ระยะห่างจากขอบบน
+            right = 1707  # ระยะห่างจากขอบซ้ายถึงขอบขวา
+            bottom = 806 # ระยะห่างจากขอบบนถึงขอบล่าง
+
+            # ตัดภาพตามขนาดที่กำหนด
+            cropped_img = img.crop((left, top, right, bottom))
+            cropped_img.save('cropped_dashboard.png')
+
+        # 2. ส่งภาพผ่าน Line Notify
+
+        # Token ของ Line Notify
+        line_notify_token = ''
+        line_notify_api = 'https://notify-api.line.me/api/notify'
+
+        # กำหนด headers สำหรับ Line Notify
+        headers = {
+            'Authorization': f'Bearer {line_notify_token}'
+        }
+
+        # กำหนดข้อมูลที่ต้องการส่ง
+        data = {
+            'message': 'Dashboard'
+        }
+
+        # เปิดไฟล์ภาพที่ต้องการส่ง
+        with open('cropped_dashboard.png', 'rb') as f:
+            files = {
+                'imageFile': f
+            }
+
+            # ส่งข้อมูลไปที่ Line Notify
+            response = requests.post(line_notify_api, headers=headers, data=data, files=files)
+
+        # ตรวจสอบสถานะการส่ง
+        if response.status_code == 200:
+            print('ส่งภาพสำเร็จ : dashboard')
+        else:
+            print(f'การส่งภาพล้มเหลว: {response.status_code}')
+    else:
+        print("Skipping job on Sunday")
+# ตั้งค่า schedule
+schedule.every().day.at("20:01").do(job)
+
+# เรียกใช้ job() ทันทีเมื่อเปิดโปรแกรม
+#job()
+
+while True:
+    schedule.run_pending()
+    time.sleep(300)  
