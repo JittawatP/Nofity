@@ -1,0 +1,176 @@
+import pandas as pd
+from sqlalchemy import create_engine
+import schedule
+import time
+from datetime import datetime
+import requests
+from urllib.parse import quote
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+import os
+
+batchStart = 162536
+
+# การตั้งค่า Google Drive API
+SCOPES = ['https://www.googleapis.com/auth/drive']
+SERVICE_ACCOUNT_FILE = 'certain-haiku-273902-183c5fabbf3a.json'
+
+# สร้างไดรฟ์เซอร์วิส
+credentials = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+service = build('drive', 'v3', credentials=credentials)
+
+# ฟังก์ชันเพื่อตรวจสอบว่ามีโฟลเดอร์อยู่แล้วหรือไม่
+def find_folder_id(folder_name):
+    query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    response = service.files().list(q=query, spaces='drive').execute()
+    folders = response.get('files', [])
+    return folders[0]['id'] if folders else None
+
+# ฟังก์ชันสร้างโฟลเดอร์ใหม่ถ้าไม่พบโฟลเดอร์เดิม
+def create_folder(folder_name):
+    file_metadata = {
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.folder'
+    }
+    folder = service.files().create(body=file_metadata, fields='id').execute()
+    return folder.get('id')
+
+# ฟังก์ชันลบไฟล์ในโฟลเดอร์
+def clear_folder(folder_id):
+    query = f"'{folder_id}' in parents and trashed=false"
+    response = service.files().list(q=query, spaces='drive').execute()
+    files = response.get('files', [])
+    for file in files:
+        service.files().delete(fileId=file['id']).execute()
+
+# ฟังก์ชันอัปโหลดไฟล์ไปยัง Google Drive และแชร์เป็นสาธารณะ
+def upload_file_to_drive(file_path, folder_id):
+    file_metadata = {
+        'name': os.path.basename(file_path),
+        'parents': [folder_id]
+    }
+    media = MediaFileUpload(file_path, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    uploaded_file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+
+    # แชร์ไฟล์เป็นสาธารณะ
+    permission = {
+        'type': 'anyone',
+        'role': 'reader',
+    }
+    service.permissions().create(fileId=uploaded_file['id'], body=permission).execute()
+
+    # รับลิงก์แชร์ไฟล์
+    link = f"https://drive.google.com/file/d/{uploaded_file['id']}/view?usp=sharing"
+    return link
+# ฟังก์ชันส่งไฟล์ไปยัง Line Notify
+def send_line_notify(message, access_token):
+    url = 'https://notify-api.line.me/api/notify'
+    headers = {'Authorization': f'Bearer {access_token}'}
+
+    # ดึงัวนเวลาปัจจุบัน
+    current_time = datetime.now().strftime('%d-%b-%y %H:%M')
+ 
+    # เปิดไฟล์ในโหมด 'rb' เพื่ออ่านในโหมดไบต์
+    data = {'message':  message}
+
+    # ส่งคำขอ POST ไปยัง Line Notify API
+    response = requests.post(url, headers=headers, data=data)
+    
+    if response.status_code == 200:
+        print("File sent successfully to Line Notify.")
+    else:
+        print(f"Failed to send file: {response.status_code} - {response.text}")
+
+
+# การตั้งค่า Access Token
+ACCESS_TOKEN = 'Iibt0zNFcj6ytxVtDSrhSTEJhzPcr3LSagdKKyeDERd'
+
+
+
+# ฟังก์ชันเชื่อมต่อฐานข้อมูลและดึงข้อมูล
+def fetch_data():
+    try:
+        # สร้าง engine ด้วย SQLAlchemy
+        host = ''
+        username = ''
+        password = ''
+        database = ''
+        
+        # เข้ารหัสรหัสผ่าน
+        encoded_password = quote(password)
+        engine = create_engine(f'mysql+mysqlconnector://{username}:{encoded_password}@{host}/{database}')
+
+        # คำสั่ง SQL สำหรับดึงข้อมูล
+        query = f"""
+            SELECT tblCustomer.`customer#` AS Code, 
+            tblCustomer.bill AS Customer, 
+            tblResult.dsamp AS `Date of sampling`, 
+            tblResult.drecieved AS Received, 
+            CONCAT("'", tblTestpackage.testcode) AS TestCode,
+            tblUnit.unitname AS `Unit ID`, 
+            tblResult.batch AS `Job ID`, 
+            tblResult.`sample#` AS `Lab ID`, 
+            tblResult.`cusref#` AS `Bottle No`, 
+            tblTimeAnalysis.ta_sent_dt AS `Sent Report`, 
+            CASE 
+                WHEN tblTimeAnalysis.ta_complete = 1 THEN 'True'
+                WHEN tblTimeAnalysis.ta_complete = 0 THEN '' 
+            END AS Complete,
+            tblTimeAnalysis.ta_remark
+            FROM tblCustomer 
+            INNER JOIN tblUnit ON tblCustomer.`customer#` = tblUnit.cusnum 
+            INNER JOIN tblResult ON tblUnit.unitnumber = tblResult.unitid 
+            INNER JOIN tblTestpackage 
+            INNER JOIN tblTestcode ON tblTestpackage.testcode = tblTestcode.testcode 
+            ON tblResult.`sample#` = tblTestcode.`saple-id` 
+            INNER JOIN tblTimeAnalysis ON tblResult.batch = tblTimeAnalysis.ta_batch
+            WHERE tblResult.batch BETWEEN {batchStart} AND (SELECT MAX(batch) FROM tblresult WHERE `sample#` > 24010000);
+            """
+
+        # ใช้ pandas ดึงข้อมูลจากฐานข้อมูล
+        df = pd.read_sql(query, engine)
+
+        # สร้างชื่อไฟล์ Excel
+        max_batch_query = "SELECT MAX(batch) FROM tblresult WHERE `sample#` > 24010000"
+        max_batch_df = pd.read_sql(max_batch_query, engine)
+        max_batch = max_batch_df.iloc[0, 0]  # ดึงค่า max(batch)
+        filename = f"{161289}-{int(max_batch)}.xlsx"
+
+        # บันทึก DataFrame เป็นไฟล์ Excel
+        df.to_excel(filename, index=False, engine='openpyxl')
+        print(f"File saved as {filename}")
+
+        folder_id = find_folder_id('logbook')
+        if not folder_id:
+            folder_id = create_folder('logbook')
+
+        clear_folder(folder_id)
+        link = upload_file_to_drive(filename, folder_id) 
+        
+        # ส่งลิงก์ไฟล์ไปยัง Line Notify
+        current_time = datetime.now().strftime('%d-%b-%y %H:%M')
+        message = f"ไฟล์วันที่ {current_time} ครับ\n {link}"
+        send_line_notify(message, ACCESS_TOKEN)
+
+    except Exception  as e:
+        print(f"Error: {e}")
+
+
+# ฟังก์ชันเพื่อตรวจสอบวัน
+def job():
+    today = datetime.now().weekday()
+    if today != 6:  # วันอาทิตย์คือ 6
+        fetch_data()
+
+# ตั้งค่า schedule
+schedule.every().day.at("07:45").do(job)
+
+# เรียกใช้งานครั้งแรก
+#fetch_data()
+
+# วนลูปรอการทำงานตามเวลาที่กำหนด
+while True:
+    schedule.run_pending()
+    time.sleep(300)  # ตรวจสอบการทำงานทุกๆ 60 วินาที
